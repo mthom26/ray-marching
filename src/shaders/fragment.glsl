@@ -8,26 +8,51 @@ const float MIN_DIST = 0.0;
 const float MAX_DIST = 100.0;
 const float EPSILON = 0.001;
 
+const float SHADOW_FALLOFF = 0.05;
+
 float op_union(float distA, float distB) {
     return min(distA, distB);
+}
+
+float op_intersect(float distA, float distB) {
+    return max(distA, distB);
+}
+
+// Inside distA and outside distB
+float op_difference(float distA, float distB) {
+    return max(distA, -distB);
 }
 
 float sdf_sphere(vec3 p, float r) {
   return length(p) - r;
 }
 
-float sdf_plane(vec3 p, vec4 n)
-{
+float sdf_box(vec3 p, vec3 b) {
+  vec3 q = abs(p) - b;
+  return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+
+float sdf_plane(vec3 p, vec4 n) {
   // n.xyz is the normal to the plane (e.g. up from the ground)
   // n.w is the distance along the normal the plane sits
   return dot(p, normalize(n.xyz)) + n.w;
 }
 
-float sdf_scene(vec3 p) {
-  float sphere = sdf_sphere(p, 1.0);
-  float plane = sdf_plane(p, vec4(0.0, 1.0, 0.0, 1.5));
+float sdf_ground(vec3 p, float r) {
+  // Just a simple plane along the `xz` axes
+  return dot(p, vec3(0.0, 1.0, 0.0)) + r;
+}
 
-  return op_union(sphere, plane);
+float sdf_scene(vec3 p) {
+  float sphere = sdf_sphere(p, 1.2);
+
+  vec3 cube_transform = vec3(-1.0, 0.0, 0.0);
+  float cube = sdf_box(p - cube_transform, vec3(1.0));
+
+  float ground = sdf_ground(p, 2.0);
+
+  float res = op_intersect(cube, sphere);
+  return op_union(res, ground);
 }
 
 // Check for shadow: 1.0 is a hit, 0.0 is no hit
@@ -98,7 +123,7 @@ vec3 get_normal(vec3 p) {
   ) - pp);  
 }
 
-vec3 phong_light(vec3 light_pos, vec3 cam_pos, vec3 p, vec3 intensity, vec3 kd, vec3 ks, float alpha) {
+vec3 phong_light(vec3 light_pos, vec3 cam_pos, vec3 p, vec3 intensity, vec3 kd, vec3 ks, float alpha, vec3 random) {
   vec3 col = vec3(0.0, 0.0, 0.0);
 
   vec3 L = normalize(light_pos - p);
@@ -120,11 +145,29 @@ vec3 phong_light(vec3 light_pos, vec3 cam_pos, vec3 p, vec3 intensity, vec3 kd, 
   }
 
   // Shadow
+  // vec3 shadow_origin = p + N * EPSILON;
+
+  // float shadow = ray_cast_shadow(shadow_origin, L);
+
+  // col = mix(col, col*0.2, shadow);
+
+  // Smooth Shadow
   vec3 shadow_origin = p + N * EPSILON;
+  float shadow_ray_count = 10.0;
+  float shadow = 0.0;
 
-  float shadow = ray_cast_shadow(shadow_origin, L);
+  for (float i = 0.0; i < shadow_ray_count; i++) {
+    float rand = fract(sin(dot(random.xy + i / 100.0, vec2(12.9898, 78.233))) * 43758.5453) * 2.0 - 1.0;
+    vec3 dir = L + vec3(rand * SHADOW_FALLOFF);
+    shadow += ray_cast_shadow(shadow_origin, dir);
+  }
 
-  col = mix(col, col*0.2, shadow);
+  // Check that we don't divide 0.0 by something
+  if (shadow == 0.0) {
+    col = mix(col, col * 0.2, shadow);
+  } else {
+    col = mix(col, col * 0.2, shadow / shadow_ray_count);
+  }
 
   return col;
 }
@@ -153,10 +196,10 @@ vec3 render(vec3 cam_pos, vec3 ray_dir) {
   col += ambient * k_a;
 
   // Light Setup
-  vec3 light_pos = vec3(0.0, 4.0, 0.0);
+  vec3 light_pos = vec3(2.4, 3.7, -3.0);
   vec3 light_intensity = vec3(0.8, 0.8, 0.8);
 
-  col += phong_light(light_pos, cam_pos, hit_p, light_intensity, k_d, k_s, shininess);
+  col += phong_light(light_pos, cam_pos, hit_p, light_intensity, k_d, k_s, shininess, ray_dir);
 
   // vec3 col = ambient * obj_color;
   // vec3 col = get_normal(cam_pos + ray_dir * dist) * 0.5 + vec3(0.5);
@@ -164,7 +207,7 @@ vec3 render(vec3 cam_pos, vec3 ray_dir) {
 }
 
 void main() {
-  vec3 cam_pos = vec3(0.0, 0.5, -3.0);
+  vec3 cam_pos = vec3(2.1, 1.9, -3.8);
   vec3 look_at = vec3(0.0, 0.0, 0.0);
 
   vec2 uv = get_coords(gl_FragCoord.xy);
