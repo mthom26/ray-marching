@@ -43,16 +43,34 @@ float sdf_ground(vec3 p, float r) {
   return dot(p, vec3(0.0, 1.0, 0.0)) + r;
 }
 
-float sdf_scene(vec3 p) {
-  float sphere = sdf_sphere(p, 1.2);
+// Utility function to compare the previously set closest hit point and material,
+// this should be called after a new object is added to the scene
+vec2 check_mat(vec2 closest, float next, float next_mat) {
+  if (next < closest.x) {
+    return vec2(next, next_mat);
+  }
+  return closest;
+}
 
-  vec3 cube_transform = vec3(-1.0, 0.0, 0.0);
+vec2 sdf_scene(vec3 p) {
+  vec2 closest_mat = vec2(MAX_DIST, 0.0);
+
+  float sphere = sdf_sphere(p, 1.2);
+  float sphere_mat = 1.0;
+  closest_mat = check_mat(closest_mat, sphere, sphere_mat);
+
+  vec3 cube_transform = vec3(0.0, 0.0, 0.0);
   float cube = sdf_box(p - cube_transform, vec3(1.0));
+  float cube_mat = 2.0;
+  closest_mat = check_mat(closest_mat, cube, cube_mat);
 
   float ground = sdf_ground(p, 2.0);
+  float ground_mat = 3.0;
+  closest_mat = check_mat(closest_mat, ground, ground_mat);
 
-  float res = op_intersect(cube, sphere);
-  return op_union(res, ground);
+  float res = op_union(cube, sphere);
+  res = op_union(res, ground);
+  return vec2(res, closest_mat.y);
 }
 
 // Check for shadow: 1.0 is a hit, 0.0 is no hit
@@ -60,7 +78,7 @@ float ray_cast_shadow(vec3 origin, vec3 dir) {
   float depth = MIN_DIST;
 
   for (int i = 0; i < MAX_STEPS; i++) {
-    float dist = sdf_scene(origin + dir * depth);
+    float dist = sdf_scene(origin + dir * depth).x;
     if (dist < EPSILON) {
       // Hit something there must be a shadow
       return 1.0;
@@ -73,19 +91,20 @@ float ray_cast_shadow(vec3 origin, vec3 dir) {
   return 0.0;
 }
 
-float ray_march(vec3 origin, vec3 dir) {
+// Returns a vec2 containing the closest hit point and its material
+vec2 ray_march(vec3 origin, vec3 dir) {
   float depth = MIN_DIST;
   for (int i = 0; i < MAX_STEPS; i++) {
-    float dist = sdf_scene(origin + dir * depth);
-    if (dist < EPSILON) {
-      return depth;
+    vec2 dist = sdf_scene(origin + dir * depth);
+    if (dist.x < EPSILON) {
+      return vec2(depth, dist.y);
     }
-    depth += dist;
+    depth += dist.x;
     if (depth > MAX_DIST) {
-      return MAX_DIST;
+      return vec2(MAX_DIST, 0.0);
     }
   }
-  return MAX_DIST;
+  return vec2(MAX_DIST, 0.0);
 }
 
 vec2 get_coords(vec2 coords) {
@@ -114,12 +133,12 @@ vec3 background_color(vec3 ray_dir) {
 }
 
 vec3 get_normal(vec3 p) {
-  float pp = sdf_scene(p);
+  float pp = sdf_scene(p).x;
 
   return normalize(vec3(
-    sdf_scene(p + vec3(EPSILON, 0.0, 0.0)),
-    sdf_scene(p + vec3(0.0, EPSILON, 0.0)),
-    sdf_scene(p + vec3(0.0, 0.0, EPSILON))
+    sdf_scene(p + vec3(EPSILON, 0.0, 0.0)).x,
+    sdf_scene(p + vec3(0.0, EPSILON, 0.0)).x,
+    sdf_scene(p + vec3(0.0, 0.0, EPSILON)).x
   ) - pp);  
 }
 
@@ -161,7 +180,7 @@ vec3 soft_shadow(vec3 col, vec3 p, vec3 N, vec3 L) {
   float depth = MIN_DIST;
   
   for (int i = 0; i < MAX_STEPS; i++) {
-    float dist = sdf_scene(shadow_origin + L * depth);
+    float dist = sdf_scene(shadow_origin + L * depth).x;
     s = min(s, 0.5 + 0.5 * dist / (w * depth));
     if (s < 0.0) break;
     depth += dist;
@@ -202,23 +221,36 @@ vec3 phong_light(vec3 light_pos, vec3 cam_pos, vec3 p, vec3 intensity, vec3 kd, 
 }
 
 vec3 render(vec3 cam_pos, vec3 ray_dir) {
-  float dist = ray_march(cam_pos, ray_dir);
+  vec2 dist = ray_march(cam_pos, ray_dir);
 
   // Didn't hit anything
-  if (dist > MAX_DIST - EPSILON) {
+  if (dist.x > MAX_DIST - EPSILON) {
     // return background_color(ray_dir);
     return vec3(0.0);
   }
 
-  vec3 hit_p = cam_pos + ray_dir * dist;
+  vec3 hit_p = cam_pos + ray_dir * dist.x;
 
   vec3 col = vec3(0.0, 0.0, 0.0);
 
-  // Object Material
+  // Ground Material - 3.0
   vec3 k_a = vec3(0.2, 0.2, 0.2); // Ambient
-  vec3 k_d = vec3(0.7, 0.2, 0.2); // Diffuse
-  vec3 k_s = vec3(1.0, 0.8, 0.4); // Specular
-  float shininess = 10.0; // Specular Power
+  vec3 k_d = vec3(0.4, 0.4, 0.5); // Diffuse
+  vec3 k_s = vec3(0.8, 0.8, 0.8); // Specular
+  float shininess = 5.0; // Specular Power
+
+  // Check Material hit
+  if (dist.y == 2.0) { // Cube Material - 2.0
+    k_a = vec3(0.2, 0.2, 0.2);
+    k_d = vec3(0.7, 0.2, 0.2);
+    k_s = vec3(1.0, 0.8, 0.4);
+    shininess = 10.0;
+  } else if (dist.y == 1.0) { // Sphere Material - 1.0
+    k_a = vec3(0.2, 0.2, 0.2);
+    k_d = vec3(0.25, 0.7, 0.2);
+    k_s = vec3(0.8, 0.9, 0.4);
+    shininess = 10.0;
+  }
 
   // Ambient light
   vec3 ambient = vec3(0.2, 0.2, 0.2);
