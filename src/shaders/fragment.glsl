@@ -123,6 +123,57 @@ vec3 get_normal(vec3 p) {
   ) - pp);  
 }
 
+// Basic sharp edge shadow
+vec3 shadow(vec3 col, vec3 p, vec3 N, vec3 L) {
+  vec3 shadow_origin = p + N * EPSILON;
+
+  float shadow = ray_cast_shadow(shadow_origin, L);
+
+  return mix(col, col*0.2, shadow);
+}
+
+// Smooth shadow
+// Increasing the `shadow_ray_count` increases shadow smoothness but is very inefficient
+vec3 shadow_smooth(vec3 col, vec3 p, vec3 N, vec3 L) {
+  vec3 shadow_origin = p + N * EPSILON;
+  float shadow_ray_count = 20.0;
+  float shadow = 0.0;
+
+  for (float i = 0.0; i < shadow_ray_count; i++) {
+    float rand = fract(sin(dot(L.xy + i / 100.0, vec2(12.9898, 78.233))) * 43758.5453) * 2.0 - 1.0;
+    vec3 dir = L + vec3(rand * SHADOW_FALLOFF);
+    shadow += ray_cast_shadow(shadow_origin, dir);
+  }
+
+  // Check that we don't divide 0.0 by something
+  if (shadow == 0.0) {
+    return mix(col, col * 0.2, shadow);
+  } 
+  return mix(col, col * 0.2, shadow / shadow_ray_count);
+}
+
+// Soft shadow using `http://iquilezles.org/www/articles/rmshadows/rmshadows.htm`
+// A lower `w` value gives a sharper shadow
+vec3 soft_shadow(vec3 col, vec3 p, vec3 N, vec3 L) {
+  vec3 shadow_origin = p + N * EPSILON;
+  float s = 1.0;
+  float w = 0.075;
+  float depth = MIN_DIST;
+  
+  for (int i = 0; i < MAX_STEPS; i++) {
+    float dist = sdf_scene(shadow_origin + L * depth);
+    s = min(s, 0.5 + 0.5 * dist / (w * depth));
+    if (s < 0.0) break;
+    depth += dist;
+    if (depth > MAX_DIST) break;
+  }
+
+  s = max(s, 0.0);
+  float shadow = 1.0 - (s * s * (3.0 - 2.0 * s));
+
+  return mix(col, col * 0.2, shadow);
+}
+
 vec3 phong_light(vec3 light_pos, vec3 cam_pos, vec3 p, vec3 intensity, vec3 kd, vec3 ks, float alpha, vec3 random) {
   vec3 col = vec3(0.0, 0.0, 0.0);
 
@@ -145,29 +196,7 @@ vec3 phong_light(vec3 light_pos, vec3 cam_pos, vec3 p, vec3 intensity, vec3 kd, 
   }
 
   // Shadow
-  // vec3 shadow_origin = p + N * EPSILON;
-
-  // float shadow = ray_cast_shadow(shadow_origin, L);
-
-  // col = mix(col, col*0.2, shadow);
-
-  // Smooth Shadow
-  vec3 shadow_origin = p + N * EPSILON;
-  float shadow_ray_count = 10.0;
-  float shadow = 0.0;
-
-  for (float i = 0.0; i < shadow_ray_count; i++) {
-    float rand = fract(sin(dot(random.xy + i / 100.0, vec2(12.9898, 78.233))) * 43758.5453) * 2.0 - 1.0;
-    vec3 dir = L + vec3(rand * SHADOW_FALLOFF);
-    shadow += ray_cast_shadow(shadow_origin, dir);
-  }
-
-  // Check that we don't divide 0.0 by something
-  if (shadow == 0.0) {
-    col = mix(col, col * 0.2, shadow);
-  } else {
-    col = mix(col, col * 0.2, shadow / shadow_ray_count);
-  }
+  col = soft_shadow(col, p, N, L);
 
   return col;
 }
