@@ -14,6 +14,12 @@ float op_union(float distA, float distB) {
     return min(distA, distB);
 }
 
+// Polynomial smooth min
+float op_union_smooth(float distA, float distB, float k) {
+  float h = clamp(0.5 + 0.5 * (distB - distA) / k, 0.0, 1.0);
+  return mix(distB, distA, h) - k * h * (1.0 - h);
+}
+
 float op_intersect(float distA, float distB) {
     return max(distA, distB);
 }
@@ -55,11 +61,12 @@ vec2 check_mat(vec2 closest, float next, float next_mat) {
 vec2 sdf_scene(vec3 p) {
   vec2 closest_mat = vec2(MAX_DIST, 0.0);
 
-  float sphere = sdf_sphere(p, 1.2);
-  float sphere_mat = 1.0;
+  vec3 sphere_transform = vec3(0.0, cos(time) * 0.25, sin(time) * 0.25);
+  float sphere = sdf_sphere(p - sphere_transform, 1.0);
+  float sphere_mat = 2.0;
   closest_mat = check_mat(closest_mat, sphere, sphere_mat);
 
-  vec3 cube_transform = vec3(0.0, 0.0, 0.0);
+  vec3 cube_transform = vec3(sin(time) * 0.75 - 2.0, 0.0, 0.0);
   float cube = sdf_box(p - cube_transform, vec3(1.0));
   float cube_mat = 2.0;
   closest_mat = check_mat(closest_mat, cube, cube_mat);
@@ -68,7 +75,7 @@ vec2 sdf_scene(vec3 p) {
   float ground_mat = 3.0;
   closest_mat = check_mat(closest_mat, ground, ground_mat);
 
-  float res = op_union(cube, sphere);
+  float res = op_union_smooth(cube, sphere, 0.5);
   res = op_union(res, ground);
   return vec2(res, closest_mat.y);
 }
